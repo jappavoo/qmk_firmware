@@ -3,7 +3,7 @@
  * Supports the Adafruit BLE board built around the nRF51822 chip.
  */
 #pragma once
-#ifdef MODULE_ADAFRUIT_BLE
+#ifdef MODULE_ADAFRUIT_SWSERIAL_BLE
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -60,4 +60,4 @@ extern bool adafruit_ble_set_power_level(int8_t level);
 }
 #endif
 
-#endif // MODULE_ADAFRUIT_BLE
+#endif // MODULE_ADAFRUIT_SWSERIAL_BLE

@@ -69,6 +69,8 @@
 #ifdef BLUETOOTH_ENABLE
   #ifdef MODULE_ADAFRUIT_BLE
     #include "adafruit_ble.h"
+  #elif MODULE_ADAFRUIT_SWSERIAL_BLE
+    #include "adafruit_swserial_ble.h"
   #else
     #include "bluetooth.h"
   #endif
@@ -608,7 +610,7 @@ static void send_keyboard(report_keyboard_t *report)
 
 #ifdef BLUETOOTH_ENABLE
   if (where == OUTPUT_BLUETOOTH || where == OUTPUT_USB_AND_BT) {
-    #ifdef MODULE_ADAFRUIT_BLE
+#if defined(MODULE_ADAFRUIT_BLE) || defined(MODULE_ADAFRUIT_SWSERIAL_BLE)
       adafruit_ble_send_keys(report->mods, report->keys, sizeof(report->keys));
     #elif MODULE_RN42
        bluefruit_serial_send(0xFD);
@@ -675,7 +677,7 @@ static void send_mouse(report_mouse_t *report)
 
 #ifdef BLUETOOTH_ENABLE
   if (where == OUTPUT_BLUETOOTH || where == OUTPUT_USB_AND_BT) {
-    #ifdef MODULE_ADAFRUIT_BLE
+   #if defined(MODULE_ADAFRUIT_BLE) || defined(MODULE_ADAFRUIT_SWSERIAL_BLE)
       // FIXME: mouse buttons
       adafruit_ble_send_mouse_move(report->x, report->y, report->v, report->h, report->buttons);
     #else
@@ -747,7 +749,7 @@ static void send_consumer(uint16_t data)
 
 #ifdef BLUETOOTH_ENABLE
     if (where == OUTPUT_BLUETOOTH || where == OUTPUT_USB_AND_BT) {
-      #ifdef MODULE_ADAFRUIT_BLE
+  #if defined(MODULE_ADAFRUIT_BLE) || defined(MODULE_ADAFRUIT_SWSERIAL_BLE)
         adafruit_ble_send_consumer_key(data, 0);
       #elif MODULE_RN42
         static uint16_t last_data = 0;
@@ -1078,7 +1080,7 @@ int main(void)
         rgblight_task();
 #endif
 
-#ifdef MODULE_ADAFRUIT_BLE
+#if defined(MODULE_ADAFRUIT_BLE) || defined(MODULE_ADAFRUIT_SWSERIAL_BLE)
         adafruit_ble_task();
 #endif
 

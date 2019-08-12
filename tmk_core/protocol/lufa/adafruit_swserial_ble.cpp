@@ -1,4 +1,4 @@
-#include "adafruit_ble.h"
+#include "adafruit_swserial_ble.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <alloca.h>
@@ -17,32 +17,10 @@
 #define OUTPUT 0x1
 
 
-
-// DEFAULT PIN ASSIGNMENTS
-// can be overridden but have never tested
-
-#ifndef AdaFruitUARTBleRXPin
-#define AdaFruitUARTBleRXPin B5
-#endif
-
-#ifndef AdaFruitUARTBleTXPin
-#define AdaFruitUARTBleTXPin B7
-#endif
-
-#ifndef AdaFruitUARTBleCTSPin
-#define AdaFruitUARTBleCTSPin F0
-#endif
-
-#ifndef AdaFruitUARTBleRTSPin
-#define AdaFruitUARTBleRTSPin F1
-#endif
-
-
 // Simple class that addes hw flow control around writing and checking
 //
 #include "SoftwareSerial.h"
 
-#define JA_TEST
 class MySWSerial: public SoftwareSerial {
   uint8_t _cts_pin, _rts_pin;
  public:
@@ -70,14 +48,14 @@ class MySWSerial: public SoftwareSerial {
       return write((const uint8_t *)str, strlen(str));
     }
 
-#ifdef JA_TEST
   static void test_init(void);
   static void test_pin(int i, int p);
+
   void     CTS(bool v);
   uint8_t  RTS();
-#endif
-  
 };
+
+
 
 MySWSerial::MySWSerial(uint8_t receivePin, uint8_t transmitPin, uint8_t ctsPin, uint8_t rtsPin) :
   SoftwareSerial(receivePin, transmitPin), _cts_pin(ctsPin), _rts_pin(rtsPin)
@@ -116,11 +94,6 @@ int MySWSerial::available(void)
   return SoftwareSerial::available();
 }
 
-MySWSerial _swserial(AdaFruitUARTBleRXPin, AdaFruitUARTBleTXPin,
-		     AdaFruitUARTBleCTSPin, AdaFruitUARTBleRTSPin);
-
-
-#ifdef JA_TEST
 void MySWSerial::test_init(void) {
   dprint("MySWSerial::test_init");
 #if 0
@@ -199,9 +172,28 @@ uint8_t MySWSerial::RTS() {
 }
 
 
+#ifndef AdaFruitUARTBleRXPin
+#define AdaFruitUARTBleRXPin B5
+#endif
+
+#ifndef AdaFruitUARTBleTXPin
+#define AdaFruitUARTBleTXPin B7
+#endif
+
+#ifndef AdaFruitUARTBleCTSPin
+#define AdaFruitUARTBleCTSPin F0
+#endif
+
+#ifndef AdaFruitUARTBleRTSPin
+#define AdaFruitUARTBleRTSPin F1
+#endif
+
+MySWSerial _mySerial(AdaFruitUARTBleRXPin, AdaFruitUARTBleTXPin,
+		     AdaFruitUARTBleCTSPin, AdaFruitUARTBleRTSPin);
+
 extern "C" {
   extern void test_init(void) {
-    _swserial.begin();
+    _mySerial.begin();
   }
 
   extern void test_pin(int i, int p) {
@@ -209,11 +201,11 @@ extern "C" {
     case 1: {
       if (p) {
 	uint8_t cmd[4]="AT\n";
-	_swserial.write((const uint8_t *)cmd, 3);
+	_mySerial.write((const uint8_t *)cmd, 3);
 	dprintf("%s\n",cmd);
 	cmd[1]=0;
-	while (_swserial.available()) {
-	  cmd[0] = _swserial.read();
+	while (_mySerial.available()) {
+	  cmd[0] = _mySerial.read();
 	  dprintf("%s", cmd);				  
 	}
 	dprintln();
@@ -223,24 +215,22 @@ extern "C" {
     case 2: {
       if (p) {
 	uint8_t cmd[16]="AT+EVENTENABLE\n";
-	_swserial.write((const uint8_t *)cmd, 15);
+	_mySerial.write((const uint8_t *)cmd, 15);
 	dprintf("%s\n",cmd);
 	cmd[1]=0;
-	while (_swserial.available()) {
-	  cmd[0] = _swserial.read();
+	while (_mySerial.available()) {
+	  cmd[0] = _mySerial.read();
 	  dprintf("%s", cmd);				  
 	}
 	dprintln();
       }
-    }	
+    }
+      break;
     default:
       dprint("?");
     }
   }
 };
-#endif
-
-
 
 #define SAMPLE_BATTERY
 #define ConnectionUpdateInterval 1000 /* milliseconds */
@@ -310,12 +300,17 @@ enum ble_system_event_bits {
   BleSystemMidiRx = 10,
 };
 
-#define AT_TIMEOUT 100
+// The SDEP.md file says 2MHz but the web page and the sample driver
+// both use 4MHz
+#define SpiBusSpeed 4000000
 
+#define SdepTimeout 150 /* milliseconds */
+#define SdepShortTimeout 10 /* milliseconds */
+#define SdepBackOff 25 /* microseconds */
 #define BatteryUpdateInterval 10000 /* milliseconds */
 
 static bool at_command(const char *cmd, char *resp, uint16_t resplen,
-                       bool verbose, uint16_t timeout = AT_TIMEOUT);
+                       bool verbose, uint16_t timeout = SdepTimeout);
 static bool at_command_P(const char *cmd, char *resp, uint16_t resplen,
                          bool verbose = false);
 
@@ -323,7 +318,7 @@ static bool at_command_P(const char *cmd, char *resp, uint16_t resplen,
 static void resp_buf_read_one(bool greedy) {
 }
 
-static void send_buf_send_one(uint16_t timeout) {
+static void send_buf_send_one(uint16_t timeout = SdepTimeout) {
 }
 
 static void resp_buf_wait(const char *cmd) {
@@ -338,12 +333,25 @@ static void resp_buf_wait(const char *cmd) {
 }
 
 static bool ble_init(void) {
+#if 0
   state.initialized = false;
   state.configured = false;
   state.is_connected = false;
 
-  _swserial.begin();
-  
+  pinMode(AdafruitBleIRQPin, PinDirectionInput);
+  pinMode(AdafruitBleCSPin, PinDirectionOutput);
+  digitalWrite(AdafruitBleCSPin, PinLevelHigh);
+
+
+  // Perform a hardware reset
+  pinMode(AdafruitBleResetPin, PinDirectionOutput);
+  digitalWrite(AdafruitBleResetPin, PinLevelHigh);
+  digitalWrite(AdafruitBleResetPin, PinLevelLow);
+  _delay_ms(10);
+  digitalWrite(AdafruitBleResetPin, PinLevelHigh);
+
+  _delay_ms(1000); // Give it a second to initialize
+#endif
   state.initialized = true;
   return state.initialized;
 }
@@ -455,17 +463,17 @@ static void set_connected(bool connected) {
 }
 
 void adafruit_ble_task(void) {
-#ifndef JA_TEST
+#if 0
   char resbuf[48];
 
   if (!state.configured && !adafruit_ble_enable_keyboard()) {
     return;
   }
   resp_buf_read_one(true);
-  send_buf_send_one(100);
+  send_buf_send_one(SdepShortTimeout);
 
   if (resp_buf.empty() && (state.event_flags & UsingEvents) &&
-      _swserial.available()) {
+      digitalRead(AdafruitBleIRQPin)) {
     // Must be an event update
     if (at_command_P(PSTR("AT+EVENTSTATUS"), resbuf, sizeof(resbuf))) {
       uint32_t mask = strtoul(resbuf, NULL, 16);
@@ -520,7 +528,7 @@ void adafruit_ble_task(void) {
     }
   }
 #endif
-#endif
+#endif 
 }
 
 static bool process_queue_item(struct queue_item *item, uint16_t timeout) {

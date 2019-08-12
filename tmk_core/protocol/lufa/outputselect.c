@@ -16,6 +16,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "outputselect.h"
 #ifdef MODULE_ADAFRUIT_BLE
     #include "adafruit_ble.h"
+#elif MODULE_ADAFRUIT_SWSERIAL_BLE
+    #include "adafruit_swserial_ble.h"
 #endif
 
 uint8_t desired_output = OUTPUT_DEFAULT;
@@ -46,7 +48,7 @@ uint8_t auto_detect_output(void) {
         return OUTPUT_USB;
     }
 
-#ifdef MODULE_ADAFRUIT_BLE
+#if defined(MODULE_ADAFRUIT_BLE) || defined(MODULE_ADAFRUIT_SWSERIAL_BLE)
     if (adafruit_ble_is_connected()) {
         return OUTPUT_BLUETOOTH;
     }
