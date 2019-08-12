@@ -17,6 +17,25 @@
 #define OUTPUT 0x1
 
 
+// DEFAULT PIN ASSIGNMENTS
+// can be overridden but have never tested
+
+#ifndef AdaFruitUARTBleRXPin
+#define AdaFruitUARTBleRXPin B5
+#endif
+
+#ifndef AdaFruitUARTBleTXPin
+#define AdaFruitUARTBleTXPin B7
+#endif
+
+#ifndef AdaFruitUARTBleCTSPin
+#define AdaFruitUARTBleCTSPin F0
+#endif
+
+#ifndef AdaFruitUARTBleRTSPin
+#define AdaFruitUARTBleRTSPin F1
+#endif
+
 // Simple class that addes hw flow control around writing and checking
 //
 #include "SoftwareSerial.h"
@@ -47,12 +66,6 @@ class MySWSerial: public SoftwareSerial {
       if (str == NULL) return 0;
       return write((const uint8_t *)str, strlen(str));
     }
-
-  static void test_init(void);
-  static void test_pin(int i, int p);
-
-  void     CTS(bool v);
-  uint8_t  RTS();
 };
 
 
@@ -94,106 +107,23 @@ int MySWSerial::available(void)
   return SoftwareSerial::available();
 }
 
-void MySWSerial::test_init(void) {
-  dprint("MySWSerial::test_init");
-#if 0
-  pinMode(B5, PinDirectionOutput);
-  pinMode(B7, PinDirectionOutput);
-  pinMode(C7, PinDirectionOutput);
-  pinMode(F1, PinDirectionOutput);
-  pinMode(F0, PinDirectionOutput);
-#endif  
-}
 
-void MySWSerial::test_pin(int i, int p) {
-
-#if 0
-  switch (i) {
-  case 1:
-    if (p) {
-      digitalWrite(B5, PinLevelHigh);
-      dprint("+B5:H\n");
-    }else {
-      digitalWrite(B5, PinLevelLow);
-      dprint("-B5:L\n");
-    }
-    break;
-  case 2:
-    if (p) {
-      digitalWrite(B7, PinLevelHigh);
-      dprint("+B7:H\n");
-    }else {
-      digitalWrite(B7, PinLevelLow);
-	dprint("-B7:L\n");
-    }
-    break;
-  case 3:
-    if (p) {
-      digitalWrite(C7, PinLevelHigh);
-      dprint("+C7:H\n");
-    }else {
-      digitalWrite(C7, PinLevelLow);
-      dprint("-C7:L\n");
-      }
-    break;
-  case 4:
-    if (p) {
-      digitalWrite(F1, PinLevelHigh);
-      dprint("+F1:H\n");
-    }else {
-      digitalWrite(F1, PinLevelLow);
-      dprint("-F1:L\n");
-    }
-    break;
-  case 5:
-    if (p) {
-      digitalWrite(F0, PinLevelHigh);
-      dprint("+F0:H\n");
-    }else {
-      digitalWrite(F0, PinLevelLow);
-      dprint("-F0:L\n");
-    }
-    break;
-  default:
-    dprint("?");
-  }
-#endif
-}
-
-void MySWSerial::CTS(bool v) {
-  if (v)
-    digitalWrite(_cts_pin, HIGH);
-  else
-    digitalWrite(_cts_pin, LOW);
-}
-  
-uint8_t MySWSerial::RTS() {
-  return digitalRead(_rts_pin);
-}
-
-
-#ifndef AdaFruitUARTBleRXPin
-#define AdaFruitUARTBleRXPin B5
-#endif
-
-#ifndef AdaFruitUARTBleTXPin
-#define AdaFruitUARTBleTXPin B7
-#endif
-
-#ifndef AdaFruitUARTBleCTSPin
-#define AdaFruitUARTBleCTSPin F0
-#endif
-
-#ifndef AdaFruitUARTBleRTSPin
-#define AdaFruitUARTBleRTSPin F1
-#endif
 
 MySWSerial _mySerial(AdaFruitUARTBleRXPin, AdaFruitUARTBleTXPin,
 		     AdaFruitUARTBleCTSPin, AdaFruitUARTBleRTSPin);
 
+static bool ble_init(void);
+
+#define RespTimeout 10 /* milliseconds */
+#define SendTimeout 10 /* milliseconds */
+static bool at_command(const char *cmd, char *resp, uint16_t resplen,
+                       bool verbose, uint16_t timeout = RespTimeout);
+
 extern "C" {
   extern void test_init(void) {
-    _mySerial.begin();
+    //_mySerial.begin();
+    // ble_init();
+    // this is now handled by initlization logic of ble_task/enable keyboard
   }
 
   extern void test_pin(int i, int p) {
@@ -223,6 +153,15 @@ extern "C" {
 	  dprintf("%s", cmd);				  
 	}
 	dprintln();
+      }
+    }
+      break;
+    case 3:{
+      if (p) {
+	char rbuf[16];
+	for (int i=0; i<sizeof(rbuf); i++) rbuf[i]=0;
+	at_command("AT\n",rbuf,sizeof(rbuf),false,0);
+	dprintf("[%s]",rbuf);
       }
     }
       break;
@@ -300,17 +239,8 @@ enum ble_system_event_bits {
   BleSystemMidiRx = 10,
 };
 
-// The SDEP.md file says 2MHz but the web page and the sample driver
-// both use 4MHz
-#define SpiBusSpeed 4000000
-
-#define SdepTimeout 150 /* milliseconds */
-#define SdepShortTimeout 10 /* milliseconds */
-#define SdepBackOff 25 /* microseconds */
 #define BatteryUpdateInterval 10000 /* milliseconds */
 
-static bool at_command(const char *cmd, char *resp, uint16_t resplen,
-                       bool verbose, uint16_t timeout = SdepTimeout);
 static bool at_command_P(const char *cmd, char *resp, uint16_t resplen,
                          bool verbose = false);
 
@@ -318,7 +248,7 @@ static bool at_command_P(const char *cmd, char *resp, uint16_t resplen,
 static void resp_buf_read_one(bool greedy) {
 }
 
-static void send_buf_send_one(uint16_t timeout = SdepTimeout) {
+static void send_buf_send_one(uint16_t timeout = SendTimeout) {
 }
 
 static void resp_buf_wait(const char *cmd) {
@@ -333,25 +263,13 @@ static void resp_buf_wait(const char *cmd) {
 }
 
 static bool ble_init(void) {
-#if 0
+  dprint("ble_init\n");
   state.initialized = false;
   state.configured = false;
   state.is_connected = false;
 
-  pinMode(AdafruitBleIRQPin, PinDirectionInput);
-  pinMode(AdafruitBleCSPin, PinDirectionOutput);
-  digitalWrite(AdafruitBleCSPin, PinLevelHigh);
+  _mySerial.begin();
 
-
-  // Perform a hardware reset
-  pinMode(AdafruitBleResetPin, PinDirectionOutput);
-  digitalWrite(AdafruitBleResetPin, PinLevelHigh);
-  digitalWrite(AdafruitBleResetPin, PinLevelLow);
-  _delay_ms(10);
-  digitalWrite(AdafruitBleResetPin, PinLevelHigh);
-
-  _delay_ms(1000); // Give it a second to initialize
-#endif
   state.initialized = true;
   return state.initialized;
 }
@@ -360,17 +278,97 @@ static inline uint8_t min(uint8_t a, uint8_t b) {
   return a < b ? a : b;
 }
 
-static bool read_response(char *resp, uint16_t resplen, bool verbose) {
-    bool success = false;
-  return success;
+
+class TermBuf {
+  char buf[4];
+  int n;
+  bool needTermination;
+public:
+
+  void reset() {
+    for(int i=0; i<sizeof(buf); i++) buf[i]=0;
+    n=0;
+    needTermination=true;
+  }
+  
+  TermBuf() {
+    reset();
+    // inialize so no termination required for first transaction;
+    needTermination = false; 
+  }
+
+  void add(char c) { buf[n%4]=c; n++; }
+
+  bool check() {
+    char c1,c2,c3,c4;
+    
+    if (!needTermination) return true; // already terminated
+
+    c4 = buf[(n-1)%4]; // last character is n-1
+    c3 = buf[(n-2)%4]; // second last character is n-2
+    c2 = buf[(n-3)%4]; // third last char is n-3;
+    c1 = buf[(n-4)%4]; // third last char is n-3;
+
+    //dprintf("%d:*%d,%d,%d,%d*\n", n, c1, c2, c3, c4);
+    
+    if (n>4 && c4 == '\n' && c3 == '\r' && c2 == 'K' && c1 == 'O' ) {
+      needTermination = false;
+      //dprint("+++\n");
+      return true;
+    }
+    return false;
+  }
+  
+  bool addAndcheck(char c) {
+    add(c);
+    return check();
+  }
+  
+} termBuf;
+
+static void read_response(char *resp, uint16_t resplen, bool verbose, uint16_t timeout)
+{
+  char c;  
+  int i=0;
+  
+  while (_mySerial.available()) {
+    c = _mySerial.read();
+    //if (verbose) dprintf("(%d)", c);
+    if (resp && resplen) {
+      resp[i] = c;
+      i++;
+      resplen--;
+    }
+    if (termBuf.addAndcheck(c)) break; // response terminated we can leave now
+  }
 }
+
 
 static bool at_command(const char *cmd, char *resp, uint16_t resplen,
                        bool verbose, uint16_t timeout) {
+  dprint("at_command\n");
+
+  if (resp && !termBuf.check()) {
+    // we need a reponse but there seems to be an outstand reply
+    // that has not been received we must wait and consume old reponse
+    // first
+    dprint("at_cmd: wait\n");
+    read_response(NULL, 0, true, 0);
+  }
+  // start a new transaction
+  termBuf.reset();  
+  int n=_mySerial.write(cmd);
+  if (verbose) dprintf("%s %d\n", cmd, n);
+  if (resp) {
+    if (verbose) for(int i=0; i<resplen; i++) resp[i]=0;
+    read_response(resp, resplen, verbose, timeout);
+    if (verbose) dprintf("%s", resp);
+  }
   return true;
 }
 
 bool at_command_P(const char *cmd, char *resp, uint16_t resplen, bool verbose) {
+  dprint("at_command_P");
   auto cmdbuf = (char *)alloca(strlen_P(cmd) + 1);
   strcpy_P(cmdbuf, cmd);
   return at_command(cmdbuf, resp, resplen, verbose);
@@ -381,15 +379,16 @@ bool adafruit_ble_is_connected(void) {
 }
 
 bool adafruit_ble_enable_keyboard(void) {
-#if 0
   char resbuf[128];
 
   if (!state.initialized && !ble_init()) {
+    dprint("ERR:enkb: !ble_init\n");
     return false;
   }
 
   state.configured = false;
 
+#if 0
   // Disable command echo
   static const char kEcho[] PROGMEM = "ATE=0";
   // Make the advertised name match the keyboard
@@ -430,16 +429,15 @@ bool adafruit_ble_enable_keyboard(void) {
       goto fail;
     }
   }
-
+  
   state.configured = true;
 
+#endif
   // Check connection status in a little while; allow the ATZ time
   // to kick in.
   state.last_connection_update = timer_read();
 fail:
   return state.configured;
-#endif
-  return false;
 }
 
 static void set_connected(bool connected) {
@@ -463,12 +461,12 @@ static void set_connected(bool connected) {
 }
 
 void adafruit_ble_task(void) {
-#if 0
   char resbuf[48];
 
   if (!state.configured && !adafruit_ble_enable_keyboard()) {
     return;
   }
+#if 0
   resp_buf_read_one(true);
   send_buf_send_one(SdepShortTimeout);
 
@@ -665,7 +663,6 @@ uint32_t adafruit_ble_read_battery_voltage(void) {
 }
 
 bool adafruit_ble_set_mode_leds(bool on) {
-#if 0
   if (!state.configured) {
     return false;
   }
@@ -680,17 +677,14 @@ bool adafruit_ble_set_mode_leds(bool on) {
                                         : PSTR("AT+HWGPIO=19,0"),
                NULL, 0);
   return true;
-#endif
 }
 
 // https://learn.adafruit.com/adafruit-feather-32u4-bluefruit-le/ble-generic#at-plus-blepowerlevel
 bool adafruit_ble_set_power_level(int8_t level) {
-#if 0
   char cmd[46];
   if (!state.configured) {
     return false;
   }
   snprintf(cmd, sizeof(cmd), "AT+BLEPOWERLEVEL=%d", level);
   return at_command(cmd, NULL, 0, false);
-#endif
 }
