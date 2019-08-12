@@ -159,9 +159,14 @@ extern "C" {
     case 3:{
       if (p) {
 	char rbuf[16];
-	for (int i=0; i<sizeof(rbuf); i++) rbuf[i]=0;
 	at_command("AT\n",rbuf,sizeof(rbuf),false,0);
 	dprintf("[%s]",rbuf);
+      }
+    }
+      break;
+    case 4:{
+      if (p) {
+	at_command("AT\n",NULL,0,false,0);
       }
     }
       break;
@@ -326,7 +331,7 @@ public:
   
 } termBuf;
 
-static void read_response(char *resp, uint16_t resplen, bool verbose, uint16_t timeout)
+static int read_response(char *resp, uint16_t resplen, bool verbose, uint16_t timeout)
 {
   char c;  
   int i=0;
@@ -341,6 +346,7 @@ static void read_response(char *resp, uint16_t resplen, bool verbose, uint16_t t
     }
     if (termBuf.addAndcheck(c)) break; // response terminated we can leave now
   }
+  return i;
 }
 
 
@@ -360,8 +366,8 @@ static bool at_command(const char *cmd, char *resp, uint16_t resplen,
   int n=_mySerial.write(cmd);
   if (verbose) dprintf("%s %d\n", cmd, n);
   if (resp) {
-    if (verbose) for(int i=0; i<resplen; i++) resp[i]=0;
-    read_response(resp, resplen, verbose, timeout);
+    int c=read_response(resp, resplen, verbose, timeout);
+    if (c<resplen) resp[c]=0; // null terminate if possible
     if (verbose) dprintf("%s", resp);
   }
   return true;
