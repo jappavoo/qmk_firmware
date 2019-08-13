@@ -17,6 +17,15 @@
 #define OUTPUT 0x1
 
 
+#define digit2AsciiByte(v, la, ra)                \
+   (ra) = v & 0x0f; (la) = v >> 4;                \
+   if ((ra)<10) (ra) += (unsigned char) '0';      \
+   else (ra) = ((ra) - 10) + (unsigned char) 'a'; \
+   if ((la)<10) (la) += (unsigned char) '0';      \
+   else (la) = ((la) - 10) + (unsigned char) 'a'
+
+
+
 // DEFAULT PIN ASSIGNMENTS
 // can be overridden but have never tested
 
@@ -118,6 +127,30 @@ static bool ble_init(void);
 #define SendTimeout 10 /* milliseconds */
 static bool at_command(const char *cmd, char *resp, uint16_t resplen,
                        bool verbose, uint16_t timeout = RespTimeout);
+static bool at_command_P(const char *cmd, char *resp, uint16_t resplen,
+                         bool verbose = false);
+
+#define SAMPLE_BATTERY
+#define ConnectionUpdateInterval 1000 /* milliseconds */
+
+static struct {
+  bool is_connected;
+  bool initialized;
+  bool configured;
+
+#define ProbedEvents 1
+#define UsingEvents 2
+  bool event_flags;
+
+#ifdef SAMPLE_BATTERY
+  uint16_t last_battery_update;
+  uint32_t vbat;
+#endif
+  uint16_t last_connection_update;
+} state;
+
+
+static void set_connected(bool connected);
 
 extern "C" {
   extern void test_init(void) {
@@ -128,6 +161,11 @@ extern "C" {
 
   extern void test_pin(int i, int p) {
     switch (i) {
+    case 0: {
+      set_connected(true);
+    } break;
+      
+#if 0
     case 1: {
       if (p) {
 	uint8_t cmd[4]="AT\n";
@@ -159,116 +197,39 @@ extern "C" {
     case 3:{
       if (p) {
 	char rbuf[16];
-	at_command("AT\n",rbuf,sizeof(rbuf),false,0);
+	at_command("AT\n",rbuf,sizeof(rbuf),true,0);
 	dprintf("[%s]",rbuf);
       }
     }
       break;
     case 4:{
       if (p) {
-	at_command("AT\n",NULL,0,false,0);
+	at_command("AT\n",NULL,0,true,0);
+      }
+    }
+      break;
+    case 5:{
+      if (p) {
+	if (!state.configured && !adafruit_ble_enable_keyboard()) {
+	  adafruit_ble_enable_keyboard();
+	} else dprint("$\n");
       }
     }
       break;
     default:
       dprint("?");
+#endif
     }
   }
 };
 
-#define SAMPLE_BATTERY
-#define ConnectionUpdateInterval 1000 /* milliseconds */
-
-static struct {
-  bool is_connected;
-  bool initialized;
-  bool configured;
-
-#define ProbedEvents 1
-#define UsingEvents 2
-  bool event_flags;
-
-#ifdef SAMPLE_BATTERY
-  uint16_t last_battery_update;
-  uint32_t vbat;
-#endif
-  uint16_t last_connection_update;
-} state;
-
-
-// The recv latency is relatively high, so when we're hammering keys quickly,
-// we want to avoid waiting for the responses in the matrix loop.  We maintain
-// a short queue for that.  Since there is quite a lot of space overhead for
-// the AT command representation wrapped up in SDEP, we queue the minimal
-// information here.
-
-enum queue_type {
-  QTKeyReport, // 1-byte modifier + 6-byte key report
-  QTConsumer,  // 16-bit key code
-#ifdef MOUSE_ENABLE
-  QTMouseMove, // 4-byte mouse report
-#endif
-};
-
-struct queue_item {
-  enum queue_type queue_type;
-  uint16_t added;
-  union __attribute__((packed)) {
-    struct __attribute__((packed)) {
-      uint8_t modifier;
-      uint8_t keys[6];
-    } key;
-
-    uint16_t consumer;
-    struct __attribute__((packed)) {
-      int8_t x, y, scroll, pan;
-      uint8_t buttons;
-    } mousemove;
-  };
-};
-
-// Items that we wish to send
-static RingBuffer<queue_item, 4> send_buf;
-// Pending response; while pending, we can't send any more requests.
-// This records the time at which we sent the command for which we
-// are expecting a response.
-static RingBuffer<uint16_t, 2> resp_buf;
-
-static bool process_queue_item(struct queue_item *item, uint16_t timeout);
-
-
-enum ble_system_event_bits {
-  BleSystemConnected = 0,
-  BleSystemDisconnected = 1,
-  BleSystemUartRx = 8,
-  BleSystemMidiRx = 10,
-};
 
 #define BatteryUpdateInterval 10000 /* milliseconds */
 
-static bool at_command_P(const char *cmd, char *resp, uint16_t resplen,
-                         bool verbose = false);
 
-
-static void resp_buf_read_one(bool greedy) {
-}
-
-static void send_buf_send_one(uint16_t timeout = SendTimeout) {
-}
-
-static void resp_buf_wait(const char *cmd) {
-  bool didPrint = false;
-  while (!resp_buf.empty()) {
-    if (!didPrint) {
-      dprintf("wait on buf for %s\n", cmd);
-      didPrint = true;
-    }
-    resp_buf_read_one(true);
-  }
-}
 
 static bool ble_init(void) {
-  dprint("ble_init\n");
+  //  dprint("ble_init\n");
   state.initialized = false;
   state.configured = false;
   state.is_connected = false;
@@ -314,13 +275,14 @@ public:
     c2 = buf[(n-3)%4]; // third last char is n-3;
     c1 = buf[(n-4)%4]; // third last char is n-3;
 
-    //dprintf("%d:*%d,%d,%d,%d*\n", n, c1, c2, c3, c4);
+    //    dprintf("%d:*%d,%d,%d,%d*\n", n, c1, c2, c3, c4);
     
-    if (n>4 && c4 == '\n' && c3 == '\r' && c2 == 'K' && c1 == 'O' ) {
+    if (n>3 && c4 == '\n' && c3 == '\r' && c2 == 'K' && c1 == 'O' ) {
       needTermination = false;
-      //dprint("+++\n");
+      //      dprint("+\n");
       return true;
     }
+    // dprint("-\n");
     return false;
   }
   
@@ -335,38 +297,42 @@ static int read_response(char *resp, uint16_t resplen, bool verbose, uint16_t ti
 {
   char c;  
   int i=0;
-  
+  bool terminated=false;
+
+ retry:
   while (_mySerial.available()) {
     c = _mySerial.read();
-    //if (verbose) dprintf("(%d)", c);
+    if (verbose) dprintf("(%d)", c);
     if (resp && resplen) {
       resp[i] = c;
       i++;
       resplen--;
     }
-    if (termBuf.addAndcheck(c)) break; // response terminated we can leave now
+    if (termBuf.addAndcheck(c)) terminated=true; // response terminated we can leave now
   }
+  if (resp && !terminated) goto retry;
   return i;
 }
 
 
+
 static bool at_command(const char *cmd, char *resp, uint16_t resplen,
                        bool verbose, uint16_t timeout) {
-  dprint("at_command\n");
+  //  dprint("at_command\n");
 
   if (resp && !termBuf.check()) {
     // we need a reponse but there seems to be an outstand reply
     // that has not been received we must wait and consume old reponse
     // first
-    dprint("at_cmd: wait\n");
-    read_response(NULL, 0, true, 0);
+    //dprint("!\n");
+    read_response(NULL, 0, false, 0);
   }
   // start a new transaction
   termBuf.reset();  
   int n=_mySerial.write(cmd);
-  if (verbose) dprintf("%s %d\n", cmd, n);
+  if (verbose) dprintf("%s", cmd);
   if (resp) {
-    int c=read_response(resp, resplen, verbose, timeout);
+    int c=read_response(resp, resplen, false, timeout);
     if (c<resplen) resp[c]=0; // null terminate if possible
     if (verbose) dprintf("%s", resp);
   }
@@ -374,7 +340,7 @@ static bool at_command(const char *cmd, char *resp, uint16_t resplen,
 }
 
 bool at_command_P(const char *cmd, char *resp, uint16_t resplen, bool verbose) {
-  dprint("at_command_P");
+  //  dprint("at_command_P");
   auto cmdbuf = (char *)alloca(strlen_P(cmd) + 1);
   strcpy_P(cmdbuf, cmd);
   return at_command(cmdbuf, resp, resplen, verbose);
@@ -388,40 +354,39 @@ bool adafruit_ble_enable_keyboard(void) {
   char resbuf[128];
 
   if (!state.initialized && !ble_init()) {
-    dprint("ERR:enkb: !ble_init\n");
+    //dprint("ERR:enkb: !ble_init\n");
     return false;
   }
 
   state.configured = false;
 
-#if 0
   // Disable command echo
-  static const char kEcho[] PROGMEM = "ATE=0";
+  static const char kEcho[] PROGMEM = "ATE=0\n";
   // Make the advertised name match the keyboard
   static const char kGapDevName[] PROGMEM =
-      "AT+GAPDEVNAME=" STR(PRODUCT) " " STR(DESCRIPTION);
+      "AT+GAPDEVNAME=" STR(PRODUCT) " " STR(DESCRIPTION) "\n";
   // Turn on keyboard support
-  static const char kHidEnOn[] PROGMEM = "AT+BLEHIDEN=1";
+  static const char kHidEnOn[] PROGMEM = "AT+BLEHIDEN=1\n";
 
   // Adjust intervals to improve latency.  This causes the "central"
   // system (computer/tablet) to poll us every 10-30 ms.  We can't
   // set a smaller value than 10ms, and 30ms seems to be the natural
   // processing time on my macbook.  Keeping it constrained to that
   // feels reasonable to type to.
-  static const char kGapIntervals[] PROGMEM = "AT+GAPINTERVALS=10,30,,";
+  static const char kGapIntervals[] PROGMEM = "AT+GAPINTERVALS=10,30,,\n";
 
   // Reset the device so that it picks up the above changes
-  static const char kATZ[] PROGMEM = "ATZ";
+  static const char kATZ[] PROGMEM = "ATZ\n";
 
   // Turn down the power level a bit
-  static const char kPower[] PROGMEM = "AT+BLEPOWERLEVEL=-12";
+  static const char kPower[] PROGMEM = "AT+BLEPOWERLEVEL=-12\n";
   static PGM_P const configure_commands[] PROGMEM = {
     kEcho,
     kGapIntervals,
     kGapDevName,
     kHidEnOn,
     kPower,
-    kATZ,
+    kATZ
   };
 
   uint8_t i;
@@ -430,15 +395,14 @@ bool adafruit_ble_enable_keyboard(void) {
     PGM_P cmd;
     memcpy_P(&cmd, configure_commands + i, sizeof(cmd));
 
-    if (!at_command_P(cmd, resbuf, sizeof(resbuf))) {
-      dprintf("failed BLE command: %S: %s\n", cmd, resbuf);
+    if (!at_command_P(cmd, resbuf, sizeof(resbuf), true)) {
+      //printf("failed BLE command: %S: %s\n", cmd, resbuf);
       goto fail;
     }
   }
   
   state.configured = true;
-
-#endif
+  
   // Check connection status in a little while; allow the ATZ time
   // to kick in.
   state.last_connection_update = timer_read();
@@ -446,12 +410,13 @@ fail:
   return state.configured;
 }
 
+#if 1
 static void set_connected(bool connected) {
   if (connected != state.is_connected) {
     if (connected) {
-      print("****** BLE CONNECT!!!!\n");
+       print("Conn\n");
     } else {
-      print("****** BLE DISCONNECT!!!!\n");
+      print("Dconn\n");
     }
     state.is_connected = connected;
 
@@ -465,17 +430,25 @@ static void set_connected(bool connected) {
     // here may not be good enough.
   }
 }
+#endif
 
 void adafruit_ble_task(void) {
   char resbuf[48];
-
+  
   if (!state.configured && !adafruit_ble_enable_keyboard()) {
     return;
   }
-#if 0
-  resp_buf_read_one(true);
-  send_buf_send_one(SdepShortTimeout);
 
+
+  if (!termBuf.check()) {
+    // there is an outstanding reponse
+    // that has not been received we must consume
+    // as much as is available
+    int n=read_response(NULL, 0, false, 0);
+  }
+
+
+#if 0
   if (resp_buf.empty() && (state.event_flags & UsingEvents) &&
       digitalRead(AdafruitBleIRQPin)) {
     // Must be an event update
@@ -535,66 +508,51 @@ void adafruit_ble_task(void) {
 #endif 
 }
 
-static bool process_queue_item(struct queue_item *item, uint16_t timeout) {
-  char cmdbuf[48];
-  char fmtbuf[64];
-
-  // Arrange to re-check connection after keys have settled
-  state.last_connection_update = timer_read();
-
-#if 1
-  if (TIMER_DIFF_16(state.last_connection_update, item->added) > 0) {
-    dprintf("send latency %dms\n",
-            TIMER_DIFF_16(state.last_connection_update, item->added));
-  }
-#endif
-
-  switch (item->queue_type) {
-    case QTKeyReport:
-      strcpy_P(fmtbuf,
-          PSTR("AT+BLEKEYBOARDCODE=%02x-00-%02x-%02x-%02x-%02x-%02x-%02x"));
-      snprintf(cmdbuf, sizeof(cmdbuf), fmtbuf, item->key.modifier,
-               item->key.keys[0], item->key.keys[1], item->key.keys[2],
-               item->key.keys[3], item->key.keys[4], item->key.keys[5]);
-      return at_command(cmdbuf, NULL, 0, true, timeout);
-
-    case QTConsumer:
-      strcpy_P(fmtbuf, PSTR("AT+BLEHIDCONTROLKEY=0x%04x"));
-      snprintf(cmdbuf, sizeof(cmdbuf), fmtbuf, item->consumer);
-      return at_command(cmdbuf, NULL, 0, true, timeout);
-
-#ifdef MOUSE_ENABLE
-    case QTMouseMove:
-      strcpy_P(fmtbuf, PSTR("AT+BLEHIDMOUSEMOVE=%d,%d,%d,%d"));
-      snprintf(cmdbuf, sizeof(cmdbuf), fmtbuf, item->mousemove.x,
-          item->mousemove.y, item->mousemove.scroll, item->mousemove.pan);
-      if (!at_command(cmdbuf, NULL, 0, true, timeout)) {
-        return false;
-      }
-      strcpy_P(cmdbuf, PSTR("AT+BLEHIDMOUSEBUTTON="));
-      if (item->mousemove.buttons & MOUSE_BTN1) {
-        strcat(cmdbuf, "L");
-      }
-      if (item->mousemove.buttons & MOUSE_BTN2) {
-        strcat(cmdbuf, "R");
-      }
-      if (item->mousemove.buttons & MOUSE_BTN3) {
-        strcat(cmdbuf, "M");
-      }
-      if (item->mousemove.buttons == 0) {
-        strcat(cmdbuf, "0");
-      }
-      return at_command(cmdbuf, NULL, 0, true, timeout);
-#endif
-    default:
-      return true;
-  }
-}
+const int8_t MODLDIDX=19; 
+const int8_t keyLdIdx[6] = { 25, 28, 31, 34, 37, 40 };
 
 bool adafruit_ble_send_keys(uint8_t hid_modifier_mask, uint8_t *keys,
                             uint8_t nkeys) {
+
+#if 1
+  static char kstr[] = "AT+BLEKEYBOARDCODE=00-00-00-00-00-00-00-00\n";
+  unsigned char ki;
+  //dprintf("<- %d\n", nkeys);
+  
+  digit2AsciiByte(hid_modifier_mask, kstr[MODLDIDX], kstr[MODLDIDX+1]);
+ 
+  //dprintf("$%u %u %u\n", hid_modifier_mask, kstr[MODLDIDX], kstr[MODLDIDX+1]);
+  for (int i=0; i<nkeys; i++) {
+    ki = keyLdIdx[i];
+    digit2AsciiByte(keys[i], kstr[ki], kstr[ki+1]);
+    //dprintf(",%u %u %u\n", keys[i], kstr[ki], kstr[ki+1]);
+  }
+  //  dprintf("%s", kstr);
+
+  if (state.is_connected) return at_command(kstr, NULL, 0, false, 0);
+  else return true;
+#endif
+  
+
+    
+  #if 0
+    char cmdbuf[48];
+  char fmtbuf[64];
+  strcpy_P(fmtbuf,
+	   PSTR("AT+BLEKEYBOARDCODE=  x-00-%02x-%02x-%02x-%02x-%02x-%02x\n"));
+
+
+  dprintf(cmdbuf, sizeof(cmdbuf), fmtbuf, hid_modifier_mask,
+	   keys[0],
+	   nkeys >= 1 ? keys[1] : 0,
+	   nkeys >= 2 ? keys[2] : 0,
+	   nkeys >= 3 ? keys[3] : 0,
+	   nkeys >= 4 ? keys[4] : 0,
+	   nkeys >= 5 ? keys[5] : 0);
+  return at_command(cmdbuf, NULL, 0, true, 0);
+#endif
 #if 0
-  struct queue_item item;
+      struct queue_item item;
   bool didWait = false;
 
   item.queue_type = QTKeyReport;
@@ -603,15 +561,15 @@ bool adafruit_ble_send_keys(uint8_t hid_modifier_mask, uint8_t *keys,
 
   while (nkeys >= 0) {
     item.key.keys[0] = keys[0];
-    item.key.keys[1] = nkeys >= 1 ? keys[1] : 0;
-    item.key.keys[2] = nkeys >= 2 ? keys[2] : 0;
-    item.key.keys[3] = nkeys >= 3 ? keys[3] : 0;
-    item.key.keys[4] = nkeys >= 4 ? keys[4] : 0;
-    item.key.keys[5] = nkeys >= 5 ? keys[5] : 0;
+    item.key.keys[1] = 
+    item.key.keys[2] = 
+    item.key.keys[3] = 
+    item.key.keys[4] = 
+    item.key.keys[5] = 
 
     if (!send_buf.enqueue(item)) {
       if (!didWait) {
-        dprint("wait for buf space\n");
+        //dprint("wait for buf space\n");
         didWait = true;
       }
       send_buf_send_one();
@@ -625,6 +583,7 @@ bool adafruit_ble_send_keys(uint8_t hid_modifier_mask, uint8_t *keys,
     nkeys -= 6;
     keys += 6;
   }
+  return true;
 #endif
   return true;
 }
@@ -669,6 +628,7 @@ uint32_t adafruit_ble_read_battery_voltage(void) {
 }
 
 bool adafruit_ble_set_mode_leds(bool on) {
+#if 0
   if (!state.configured) {
     return false;
   }
@@ -682,15 +642,20 @@ bool adafruit_ble_set_mode_leds(bool on) {
   at_command_P(on && state.is_connected ? PSTR("AT+HWGPIO=19,1")
                                         : PSTR("AT+HWGPIO=19,0"),
                NULL, 0);
+#endif
   return true;
 }
 
 // https://learn.adafruit.com/adafruit-feather-32u4-bluefruit-le/ble-generic#at-plus-blepowerlevel
 bool adafruit_ble_set_power_level(int8_t level) {
+#if 0
   char cmd[46];
   if (!state.configured) {
     return false;
   }
   snprintf(cmd, sizeof(cmd), "AT+BLEPOWERLEVEL=%d", level);
   return at_command(cmd, NULL, 0, false);
+#endif
+  return true;
+
 }

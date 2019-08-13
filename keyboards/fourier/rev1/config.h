@@ -27,7 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define DEVICE_VER      0x0100
 #define MANUFACTURER    Keebio
 #define PRODUCT         Fourier
-#define DESCRIPTION     Split 40 percent staggered keyboard
+#define DESCRIPTION     JA Vortex
 
 /* key matrix size */
 // Rows are doubled-up
